@@ -19,7 +19,7 @@ followed by a blank line, then the content. Apply the header to the **first resp
 2. **Do NOT run `entire session attach` without showing the preview table first.** The whole point of this skill is preview-then-confirm. `attach` amends the target repo's HEAD; previewing wrong means amending the wrong commit.
 3. **Always `cd` into the target repo before running `entire session attach`.** The CLI resolves the repo from cwd. Use one `cd … && entire session attach …` per call so each invocation hits the right repo.
 
-Required CLI: `entire` 0.6.2+. No special flags needed — this skill works against the shipped CLI via cwd-scoped `entire session attach`.
+Required CLI: `entire` 0.6.2+ and `git` 2.31+ (Step 3 uses `git rev-parse --path-format`). No special flags needed — this skill works against the shipped CLI via cwd-scoped `entire session attach`.
 
 ## Flow
 
@@ -53,7 +53,7 @@ Build a candidate set, union from these sources, then de-duplicate by path:
 
 1. **From the user's message**: any repo paths or aliases the user named explicitly (e.g. "the foo repo and the bar api"). Resolve aliases via the user's `CLAUDE.md` or treat as filesystem paths.
 
-2. **From sibling repos under the launch directory** (only if launch dir is NOT Entire-enabled): list immediate subdirectories that have their own `.git` and a `.entire/settings.json`.
+2. **From sibling repos under the launch directory** (only if launch dir is NOT Entire-enabled): list immediate subdirectories that have their own `.git` (a directory, or a file in a linked worktree) and a `.entire/settings.json`.
 
 3. **From the agent's edit history in this session**: any repo whose files were edited during the session — derive from the agent's own context. If unsure, ask the user.
 
@@ -71,15 +71,18 @@ For each candidate, inspect git and the session store to compute the action — 
 
 ```bash
 # Get HEAD hash and message
-HEAD_HASH=$(git -C <repo> rev-parse HEAD)
-HEAD_MSG=$(git -C <repo> log -1 --format=%B HEAD)
+HEAD_HASH=$(git -C "<repo>" rev-parse HEAD)
+HEAD_MSG=$(git -C "<repo>" log -1 --format=%B HEAD)
 
 # Existing Entire-Checkpoint trailer on HEAD, if any
 EXISTING_TRAILER=$(printf '%s\n' "$HEAD_MSG" | grep -E '^Entire-Checkpoint:' | tail -1 | awk '{print $2}')
 
-# Is the session already tracked in this repo's store?
-STATE_FILE=<repo>/.git/entire-sessions/<session-id>.json
+# Is the session already tracked in this repo's store? Entire keeps session
+# state in the git common dir, which is not <repo>/.git in a linked worktree.
+STATE_FILE="$(git -C "<repo>" rev-parse --path-format=absolute --git-common-dir)/entire-sessions/<session-id>.json"
 ```
+
+Don't build `STATE_FILE` from `<repo>/.git`: in a linked worktree (`git worktree add`) `.git` is a file, so that path never exists and the preview wrongly shows `would_add_trailer`. Git older than 2.31 prints `--path-format=absolute` as an extra line instead of failing, so if the output is not a single absolute path, check `git --version`.
 
 Decide the action per repo:
 
